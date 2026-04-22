@@ -1,4 +1,4 @@
-import os, json, requests
+import os, json, re, requests
 from atproto import Client, models
 
 TWITTER_HANDLE       = os.environ["TWITTER_HANDLE"]
@@ -18,6 +18,10 @@ def load_seen():
 def save_seen(seen):
     with open(STATE_FILE, "w") as f:
         json.dump(list(seen), f)
+
+def clean_text(text):
+    text = re.sub(r'https://t\.co/\S+', '', text)
+    return text.strip()
 
 def get_user_id(handle):
     r = requests.get(f"https://api.twitter.com/2/users/by/username/{handle}", headers=HEADERS)
@@ -60,8 +64,11 @@ def main():
     bsky.login(BLUESKY_HANDLE, BLUESKY_PASSWORD)
     new_ids = set()
     for tweet in reversed(tweets):
-        tid, text = tweet["id"], tweet["text"]
+        tid, text = tweet["id"], clean_text(tweet["text"])
         if tid in seen: continue
+        if not text and not tweet.get("attachments",{}).get("media_keys"):
+            seen.add(tid)
+            continue
         print(f"-> Reposting: {text[:80]}")
         media_keys = tweet.get("attachments",{}).get("media_keys",[])
         embed = None
@@ -69,7 +76,7 @@ def main():
             blobs = upload_images(bsky, media_keys, media_map)
             if blobs: embed = models.AppBskyEmbedImages.Main(images=blobs)
         try:
-            bsky.send_post(text=text, embed=embed)
+            bsky.send_post(text=text or ".", embed=embed)
             print(f"Posted: {text[:80]}")
             new_ids.add(tid)
         except Exception as e:
